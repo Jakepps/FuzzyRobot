@@ -38,8 +38,6 @@ namespace FuzzyRobot
 
         private void FixedUpdate()
         {
-            if (sensors == null) return;
-
             // 1) Sensors
             sensors.ReadDistances(out float dLeft, out float dCenter, out float dRight);
 
