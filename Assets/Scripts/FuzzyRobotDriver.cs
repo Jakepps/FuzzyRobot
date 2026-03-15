@@ -5,9 +5,15 @@ namespace FuzzyRobot
     [RequireComponent(typeof(Rigidbody))]
     public sealed class FuzzyRobotDriver : MonoBehaviour
     {
+        private const float Epsilon = 1e-6f;
+        
         [Header("Refs")]
         [SerializeField] private RobotObstacleSensors sensors;
-        [SerializeField] private Transform target; // опционально (для angle_err)
+        [SerializeField] private Transform target;
+        [SerializeField] private Rigidbody rigidbodyDriver;
+
+        [Tooltip("Опционально: объект для визуализации логического направления (стрелка, маркер и т.п.).")]
+        [SerializeField] private Transform headingVisual;
 
         [Header("Speed scaling (Unity m/s <-> fuzzy 0..100)")]
         [Tooltip("Какая Unity-скорость (м/с) соответствует 100 fuzzy units.")]
@@ -17,85 +23,206 @@ namespace FuzzyRobot
         [SerializeField] private float maxSpeedMs = 6f;
         [SerializeField] private float maxAccelMs2 = 8f;
         [SerializeField] private float maxDecelMs2 = 10f;
+        [SerializeField] private float lateralDampingAccelMs2 = 12f;
 
-        [Header("Yaw control")]
-        [Tooltip("Максимальная угловая скорость поворота (град/с), соответствующая |phi|=45.")]
+        [Header("Turn control")]
+        [Tooltip("Максимальная логическая скорость поворота (град/с), соответствующая |phi| = 45.")]
         [SerializeField] private float maxYawRateDeg = 180f;
 
-        [Tooltip("Максимальное угловое ускорение (рад/с^2).")]
-        [SerializeField] private float maxYawAccelRad = 12f;
+        [Tooltip("Максимальное изменение угловой скорости (град/с²).")]
+        [SerializeField] private float maxYawAccelDeg = 720f;
 
-        private Rigidbody _rb;
+        [Header("Goal")]
+        [SerializeField] private float stopDistance = 0.5f;
+        [SerializeField] private float stopBrakeAccelMs2 = 15f;
+
+        [Header("Future extreme factors (пока можно не трогать)")]
+        [SerializeField] private bool useExtremeFactors;
+        [SerializeField, Range(0f, 100f)] private float battery = 50f;
+        [SerializeField, Range(0f, 2f)] private float surface;
+        [SerializeField, Range(0f, 1000f)] private float illumination = 200f;
+
+        [Header("Debug")]
+        [SerializeField] private bool debugLog;
+
+        private readonly FuzzyMamdaniController _controller = new();
+
+        /// <summary>
+        /// Логическое направление движения.
+        /// Оно намеренно отделено от transform.forward,
+        /// потому что для катящегося шара transform.forward ненадёжен.
+        /// </summary>
+        private Vector3 _planarForward = Vector3.forward;
+
+        private float _currentYawRateDeg;
 
         private void Awake()
         {
-            _rb = GetComponent<Rigidbody>();
-            if (sensors == null)
+            if (rigidbodyDriver == null)
             {
-                sensors = GetComponent<RobotObstacleSensors>();
+                rigidbodyDriver = GetComponent<Rigidbody>();
             }
+
+            InitializeForward();
+        }
+
+        private void InitializeForward()
+        {
+            if (target != null)
+            {
+                Vector3 toTarget = Flatten(target.position - transform.position);
+                if (toTarget.sqrMagnitude > Epsilon)
+                {
+                    _planarForward = toTarget.normalized;
+                }
+            }
+
+            if (_planarForward.sqrMagnitude < Epsilon)
+            {
+                Vector3 f = Flatten(transform.forward);
+                _planarForward = f.sqrMagnitude > Epsilon ? f.normalized : Vector3.forward;
+            }
+
+            UpdateHeadingVisual();
         }
 
         private void FixedUpdate()
         {
-            // 1) Sensors
-            sensors.ReadDistances(out float dLeft, out float dCenter, out float dRight);
+            if (sensors == null || 
+                rigidbodyDriver == null)
+            {
+                return;
+            }
 
-            // 2) Angle error (optional)
+            Vector3 position = rigidbodyDriver.position;
+            Vector3 planarVelocity = Flatten(GetLinearVelocity(rigidbodyDriver));
+            float planarSpeed = planarVelocity.magnitude;
+
+            // Если достигли цели — плавно тормозим и больше не рулём
+            if (target != null)
+            {
+                Vector3 toTarget = Flatten(target.position - position);
+                if (toTarget.sqrMagnitude <= stopDistance * stopDistance)
+                {
+                    BrakeToStop(planarVelocity);
+                    UpdateHeadingVisual();
+                    return;
+                }
+            }
+
+            // 1) Считываем сенсоры по логическому forward
+            sensors.ReadDistances(position, _planarForward, out float dLeft, out float dCenter, out float dRight);
+
+            // 2) Угол на цель
             float angleErrDeg = 0f;
             if (target != null)
             {
-                Vector3 to = target.position - transform.position;
-                to.y = 0f;
-                if (to.sqrMagnitude > 1e-6f)
+                Vector3 toTarget = Flatten(target.position - position);
+                if (toTarget.sqrMagnitude > Epsilon)
                 {
-                    to.Normalize();
-                    angleErrDeg = Vector3.SignedAngle(transform.forward, to, Vector3.up);
+                    angleErrDeg = Vector3.SignedAngle(_planarForward, toTarget.normalized, Vector3.up);
                     angleErrDeg = Mathf.Clamp(angleErrDeg, -90f, 90f);
                 }
             }
 
-            // 3) Speed in fuzzy units
-            float speedMs = _rb.linearVelocity.magnitude;
-            float speedFuzzy = Mathf.Clamp(speedMs / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
+            // 3) Текущая скорость в fuzzy units
+            float speedFuzzy = Mathf.Clamp(planarSpeed / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
 
-            // 4) Fuzzy step (экстремальные факторы сейчас выключены)
-            var outCmd = FuzzyMamdaniController.Compute(
-                dLeft, dCenter, dRight,
+            // 4) Нечёткий шаг
+            float battInput = useExtremeFactors ? battery : 50f;
+            float surfInput = useExtremeFactors ? surface : 0f;
+            float illumInput = useExtremeFactors ? illumination : 200f;
+
+            var outCmd = _controller.Compute(
+                dLeft,
+                dCenter,
+                dRight,
                 angleErrDeg,
                 speedFuzzy,
-                useExtremeFactors: false
+                battInput,
+                surfInput,
+                illumInput
             );
 
-            // 5) Convert ΔV back to m/s delta
+            float dt = Time.fixedDeltaTime;
+
+            // 5) Обновляем логическое направление
+            float desiredYawRateDeg = Mathf.Clamp(outCmd.Phi / 45f, -1f, 1f) * maxYawRateDeg;
+            _currentYawRateDeg = Mathf.MoveTowards(_currentYawRateDeg, desiredYawRateDeg, maxYawAccelDeg * dt);
+
+            _planarForward = Quaternion.AngleAxis(_currentYawRateDeg * dt, Vector3.up) * _planarForward;
+            _planarForward = Flatten(_planarForward).normalized;
+
+            // 6) Перевод ΔV обратно в м/с
             float deltaSpeedMs = outCmd.DeltaV / 100f * speedAt100;
 
-            // Desired speed
-            float desiredSpeedMs = Mathf.Clamp(speedMs + deltaSpeedMs, 0f, maxSpeedMs);
+            float currentForwardSpeed = Vector3.Dot(planarVelocity, _planarForward);
+            float desiredSpeedMs = Mathf.Clamp(currentForwardSpeed + deltaSpeedMs, 0f, maxSpeedMs);
 
-            // 6) Linear acceleration control (вдоль forward)
+            // Разгон/торможение вдоль логического направления
+            float forwardAccel = (desiredSpeedMs - currentForwardSpeed) / Mathf.Max(0.001f, dt);
+            forwardAccel = Mathf.Clamp(forwardAccel, -maxDecelMs2, maxAccelMs2);
+
+            // Подавление бокового сноса
+            Vector3 lateralVelocity = planarVelocity - _planarForward * currentForwardSpeed;
+            Vector3 lateralAccel = Vector3.zero;
+            if (lateralVelocity.sqrMagnitude > Epsilon)
+            {
+                lateralAccel = Vector3.ClampMagnitude(-lateralVelocity / Mathf.Max(0.001f, dt), lateralDampingAccelMs2);
+            }
+
+            rigidbodyDriver.AddForce(_planarForward * forwardAccel + lateralAccel, ForceMode.Acceleration);
+
+            UpdateHeadingVisual();
+
+            if (debugLog)
+            {
+                Debug.LogError(
+                    $"[FuzzyRobot] dL={dLeft:F2} dC={dCenter:F2} dR={dRight:F2} " +
+                    $"ang={angleErrDeg:F1} speed={speedFuzzy:F1} dv={outCmd.DeltaV:F2} phi={outCmd.Phi:F2}"
+                );
+            }
+        }
+
+        private void BrakeToStop(Vector3 planarVelocity)
+        {
             float dt = Time.fixedDeltaTime;
-            Vector3 fwd = transform.forward;
 
-            float currentForwardSpeed = Vector3.Dot(_rb.linearVelocity, fwd);
-            float speedErr = desiredSpeedMs - currentForwardSpeed;
+            Vector3 brakeAccel = Vector3.zero;
+            if (planarVelocity.sqrMagnitude > Epsilon)
+            {
+                brakeAccel = Vector3.ClampMagnitude(-planarVelocity / Mathf.Max(0.001f, dt), stopBrakeAccelMs2);
+            }
 
-            float accel = speedErr / Mathf.Max(0.001f, dt);
-            accel = Mathf.Clamp(accel, -maxDecelMs2, maxAccelMs2);
+            rigidbodyDriver.AddForce(brakeAccel, ForceMode.Acceleration);
+            _currentYawRateDeg = Mathf.MoveTowards(_currentYawRateDeg, 0f, maxYawAccelDeg * dt);
+        }
 
-            _rb.AddForce(fwd * accel, ForceMode.Acceleration);
+        private void UpdateHeadingVisual()
+        {
+            if (headingVisual == null)
+            {
+                return;
+            }
 
-            // 7) Yaw control: phi[-45..45] -> yawRate[-max..max]
-            float maxYawRateRad = maxYawRateDeg * Mathf.Deg2Rad;
-            float desiredYawRate = Mathf.Clamp(outCmd.Phi / 45f, -1f, 1f) * maxYawRateRad;
+            Vector3 pos = rigidbodyDriver != null ? rigidbodyDriver.position : transform.position;
+            headingVisual.position = pos;
 
-            float currentYawRate = _rb.angularVelocity.y;
-            float yawErr = desiredYawRate - currentYawRate;
+            if (_planarForward.sqrMagnitude > Epsilon)
+            {
+                headingVisual.rotation = Quaternion.LookRotation(_planarForward, Vector3.up);
+            }
+        }
 
-            float yawAccel = yawErr / Mathf.Max(0.001f, dt);
-            yawAccel = Mathf.Clamp(yawAccel, -maxYawAccelRad, maxYawAccelRad);
+        private static Vector3 Flatten(Vector3 v)
+        {
+            v.y = 0f;
+            return v;
+        }
 
-            _rb.AddTorque(Vector3.up * yawAccel, ForceMode.Acceleration);
+        private static Vector3 GetLinearVelocity(Rigidbody rb)
+        {
+            return rb.linearVelocity;
         }
     }
 }
