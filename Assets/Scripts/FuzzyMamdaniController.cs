@@ -257,9 +257,70 @@ namespace FuzzyRobot
 
         private static float Trimf(float x, float a, float b, float c)
         {
-            float left = (x - a) / ((b - a) + Eps);
-            float right = (c - x) / ((c - b) + Eps);
-            return Mathf.Max(Mathf.Min(left, right), 0f);
+            // Защита от некорректного задания диапазона
+            if (a > b || b > c)
+            {
+                Debug.LogError($"[FuzzyRobot] Invalid trimf params: a={a}, b={b}, c={c}");
+                return 0f;
+            }
+
+            // Полностью вырожденный случай: одна точка
+            if (Mathf.Abs(a - b) < Eps && Mathf.Abs(b - c) < Eps)
+            {
+                return Mathf.Abs(x - b) < Eps ? 1f : 0f;
+            }
+
+            // Левое плечо: (a == b), например (0, 0, 5)
+            // membership = 1 на всём x <= b, затем линейное падение к 0 в точке c
+            if (Mathf.Abs(a - b) < Eps)
+            {
+                if (x <= b)
+                {
+                    return 1f;
+                }
+
+                if (x >= c)
+                {
+                    return 0f;
+                }
+
+                return Mathf.Clamp01((c - x) / Mathf.Max(c - b, Eps));
+            }
+
+            // Правое плечо: (b == c), например (5, 10, 10)
+            // membership = 0 до a, затем линейный рост к 1 в точке b и 1 на всём x >= b
+            if (Mathf.Abs(b - c) < Eps)
+            {
+                if (x <= a)
+                {
+                    return 0f;
+                }
+
+                if (x >= b)
+                {
+                    return 1f;
+                }
+
+                return Mathf.Clamp01((x - a) / Mathf.Max(b - a, Eps));
+            }
+
+            // Обычный треугольник
+            if (x <= a || x >= c)
+            {
+                return 0f;
+            }
+
+            if (Mathf.Abs(x - b) < Eps)
+            {
+                return 1f;
+            }
+
+            if (x < b)
+            {
+                return Mathf.Clamp01((x - a) / Mathf.Max(b - a, Eps));
+            }
+
+            return Mathf.Clamp01((c - x) / Mathf.Max(c - b, Eps));
         }
 
         private static float[] BuildTrimf(float[] universe, float a, float b, float c)
