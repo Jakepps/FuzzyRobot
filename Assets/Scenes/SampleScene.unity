@@ -1420,6 +1420,12 @@ MonoBehaviour:
   maxYawAccelDeg: 720
   stopDistance: 0.5
   stopBrakeAccelMs2: 15
+  minGoalSpeedMs: 0.75
+  requireLineOfSightToTarget: 1
+  frontBlockedDistance: 2
+  sidePreferenceThreshold: 0.25
+  avoidCruiseSpeedMs: 2.5
+  avoidCreepSpeedMs: 1
   useExtremeFactors: 0
   battery: 50
   surface: 0

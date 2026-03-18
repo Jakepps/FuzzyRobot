@@ -13,6 +13,10 @@ namespace FuzzyRobot
         [Header("Debug")]
         [SerializeField] private bool debugDraw = true;
 
+        private readonly RaycastHit[] _hitsBuffer = new RaycastHit[16];
+
+        public float MaxDistance => maxDistance;
+
         public void ReadDistances(Vector3 worldPosition, Vector3 forward, out float left, out float center, out float right)
         {
             Vector3 position = worldPosition + Vector3.up * originHeight;
@@ -37,15 +41,47 @@ namespace FuzzyRobot
             right = Mathf.Clamp(right, 0f, maxDistance);
         }
 
-        private float Cast(Vector3 originPos, Vector3 dir, Color c)
+        public bool HasLineOfSight(Vector3 worldPosition, Vector3 targetPosition)
         {
-            dir.Normalize();
+            Vector3 origin = worldPosition + Vector3.up * originHeight;
+            Vector3 toTarget = targetPosition - origin;
+            toTarget.y = 0f;
 
-            if (Physics.Raycast(originPos, dir, out RaycastHit hit, maxDistance, obstacleMask, QueryTriggerInteraction.Ignore))
+            float distance = toTarget.magnitude;
+            if (distance < 1e-6f)
+            {
+                return true;
+            }
+
+            Vector3 dir = toTarget / distance;
+
+            if (TryGetClosestHit(origin, dir, distance, out RaycastHit hit))
             {
                 if (debugDraw)
                 {
-                    Debug.DrawLine(originPos, hit.point, c);
+                    Debug.DrawLine(origin, hit.point, Color.red);
+                }
+                
+                return false;
+            }
+
+            if (debugDraw)
+            {
+                Debug.DrawLine(origin, origin + dir * distance, Color.blue);
+            }
+
+            return true;
+        }
+
+        private float Cast(Vector3 originPos, Vector3 dir, Color color)
+        {
+            dir.Normalize();
+
+            if (TryGetClosestHit(originPos, dir, maxDistance, out RaycastHit hit))
+            {
+                if (debugDraw)
+                {
+                    Debug.DrawLine(originPos, hit.point, color);
                 }
                 
                 return hit.distance;
@@ -53,10 +89,51 @@ namespace FuzzyRobot
 
             if (debugDraw)
             {
-                Debug.DrawLine(originPos, originPos + dir * maxDistance, c);
+                Debug.DrawLine(originPos, originPos + dir * maxDistance, color);
             }
-            
+
             return maxDistance;
+        }
+
+        private bool TryGetClosestHit(Vector3 originPos, Vector3 dir, float distance, out RaycastHit closestHit)
+        {
+            int hitCount = Physics.RaycastNonAlloc(
+                originPos,
+                dir,
+                _hitsBuffer,
+                distance,
+                obstacleMask,
+                QueryTriggerInteraction.Ignore);
+
+            float bestDistance = float.PositiveInfinity;
+            closestHit = default;
+            bool found = false;
+
+            for (int i = 0; i < hitCount; i++)
+            {
+                RaycastHit hit = _hitsBuffer[i];
+                if (hit.collider == null)
+                {
+                    continue;
+                }
+
+                Transform hitTransform = hit.collider.transform;
+                
+                if (hitTransform == transform || 
+                    hitTransform.IsChildOf(transform))
+                {
+                    continue;
+                }
+
+                if (hit.distance < bestDistance)
+                {
+                    bestDistance = hit.distance;
+                    closestHit = hit;
+                    found = true;
+                }
+            }
+
+            return found;
         }
     }
 }
