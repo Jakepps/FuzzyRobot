@@ -11,9 +11,9 @@ TagManager:
   - Obstacles
   - Water
   - UI
-  - 
-  - 
-  - 
+  - SurfaceSmooth
+  - SurfaceRough
+  - SurfaceSlippery
   - 
   - 
   - 

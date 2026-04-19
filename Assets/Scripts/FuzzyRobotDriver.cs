@@ -3,9 +3,14 @@
 namespace FuzzyRobot
 {
     [RequireComponent(typeof(Rigidbody))]
-    public sealed class FuzzyRobotDriver : MonoBehaviour
+    public class FuzzyRobotDriver : MonoBehaviour
     {
         private const float Epsilon = 1e-6f;
+        
+        //Fallback manual values
+        private const float BatteryConst = 50f;
+        private const float SurfaceConst = 0;
+        private const float IlluminationConst = 200f;
         
         [Header("Refs")]
         [SerializeField] private RobotObstacleSensors sensors;
@@ -44,11 +49,27 @@ namespace FuzzyRobot
         [SerializeField] private float avoidCruiseSpeedMs = 2.5f;
         [SerializeField] private float avoidCreepSpeedMs = 1.0f;
 
-        [Header("Future extreme factors (пока можно не трогать)")]
-        [SerializeField] private bool useExtremeFactors;
-        [SerializeField, Range(0f, 100f)] private float battery = 50f;
-        [SerializeField, Range(0f, 2f)] private float surface;
-        [SerializeField, Range(0f, 1000f)] private float illumination = 200f;
+        [Header("Runtime extreme-factor providers")]
+        [SerializeField] private bool useRuntimeExtremeFactors = true;
+        [SerializeField] private RobotBattery batteryModel;
+        [SerializeField] private RobotSurfaceProbe surfaceProbe;
+        [SerializeField] private RobotIlluminationProbe illuminationProbe;
+
+        [Header("Safety envelope")]
+        [SerializeField] private bool useSafetyEnvelope = true;
+        [SerializeField] private float lowBatterySpeedMultiplier = 0.7f;
+        [SerializeField] private float roughSpeedMultiplier = 0.85f;
+        [SerializeField] private float slipperySpeedMultiplier = 0.65f;
+        [SerializeField] private float darkSpeedMultiplier = 0.75f;
+        [SerializeField] private float extremeComboSpeedMultiplier = 0.55f;
+        
+        private struct RuntimeConditions
+        {
+            public float BatteryPercent;   // 0..100
+            public float SurfaceValue;     // 0..2
+            public float Illumination;     // 0..1000
+            public float CombinedRisk01;   // 0..1
+        }
 
         [Header("Debug")]
         [SerializeField] private bool debugLog;
@@ -160,6 +181,21 @@ namespace FuzzyRobot
 
             float dt = Time.fixedDeltaTime;
             float currentForwardSpeed = Vector3.Dot(planarVelocity, _planarForward);
+            
+            RuntimeConditions runtime = ReadRuntimeConditions(position, dt);
+            
+            if (batteryModel.IsRecharging)
+            {
+                BrakeToStop(planarVelocity);
+                UpdateHeadingVisual();
+
+                if (debugLog)
+                {
+                    Debug.Log("[FuzzyRobot] Battery depleted. Robot is stopped and recharging.");
+                }
+
+                return;
+            }
 
             Vector3 desiredForward;
             float desiredSpeedMs;
@@ -168,9 +204,9 @@ namespace FuzzyRobot
             {
                 float speedFuzzy = Mathf.Clamp(planarSpeed / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
 
-                float battInput = useExtremeFactors ? battery : 50f;
-                float surfInput = useExtremeFactors ? surface : 0f;
-                float illumInput = useExtremeFactors ? illumination : 200f;
+                float battInput = useRuntimeExtremeFactors ? runtime.BatteryPercent : 50f;
+                float surfInput = useRuntimeExtremeFactors ? runtime.SurfaceValue : 0f;
+                float illumInput = useRuntimeExtremeFactors ? runtime.Illumination : 200f;
 
                 var outCmd = _controller.Compute(
                     dLeft,
@@ -202,6 +238,7 @@ namespace FuzzyRobot
                 if (distanceToTarget > stopDistance * 2f)
                 {
                     desiredSpeedMs = Mathf.Max(desiredSpeedMs, minGoalSpeedMs);
+                    ApplySafetyEnvelope(runtime, ref desiredSpeedMs);
                 }
 
                 if (debugLog)
@@ -216,6 +253,8 @@ namespace FuzzyRobot
             {
                 desiredForward = ComputeAvoidanceForward(dLeft, dCenter, dRight);
                 desiredSpeedMs = ComputeAvoidanceSpeed(dCenter);
+                
+                ApplySafetyEnvelope(runtime, ref desiredSpeedMs);
 
                 if (debugLog)
                 {
@@ -226,8 +265,8 @@ namespace FuzzyRobot
                 }
             }
 
-            UpdateForwardTowards(desiredForward, dt);
-            ApplyTranslation(planarVelocity, desiredSpeedMs, dt);
+            UpdateForwardTowards(desiredForward, dt, runtime);
+            ApplyTranslation(planarVelocity, desiredSpeedMs, dt, runtime);
             UpdateHeadingVisual();
         }
 
@@ -283,7 +322,7 @@ namespace FuzzyRobot
             return avoidCruiseSpeedMs;
         }
 
-        private void UpdateForwardTowards(Vector3 desiredForward, float dt)
+        private void UpdateForwardTowards(Vector3 desiredForward, float dt, RuntimeConditions runtime)
         {
             desiredForward = Flatten(desiredForward);
             if (desiredForward.sqrMagnitude < Epsilon)
@@ -295,8 +334,10 @@ namespace FuzzyRobot
                 desiredForward.Normalize();
             }
 
+            float yawRateLimit = GetRuntimeYawRateLimit(runtime);
+            
             float headingErrorDeg = Vector3.SignedAngle(_planarForward, desiredForward, Vector3.up);
-            float desiredYawRateDeg = Mathf.Clamp(headingErrorDeg * 4f, -maxYawRateDeg, maxYawRateDeg);
+            float desiredYawRateDeg = Mathf.Clamp(headingErrorDeg * 4f, -yawRateLimit, yawRateLimit);
 
             _currentYawRateDeg = Mathf.MoveTowards(_currentYawRateDeg, desiredYawRateDeg, maxYawAccelDeg * dt);
 
@@ -313,12 +354,14 @@ namespace FuzzyRobot
             }
         }
 
-        private void ApplyTranslation(Vector3 planarVelocity, float desiredSpeedMs, float dt)
+        private void ApplyTranslation(Vector3 planarVelocity, float desiredSpeedMs, float dt, RuntimeConditions runtime)
         {
             float currentForwardSpeed = Vector3.Dot(planarVelocity, _planarForward);
 
+            float runtimeMaxDecelMs2 = GetRuntimeMaxDecelMs2(runtime);
+            
             float forwardAccel = (desiredSpeedMs - currentForwardSpeed) / Mathf.Max(0.001f, dt);
-            forwardAccel = Mathf.Clamp(forwardAccel, -maxDecelMs2, maxAccelMs2);
+            forwardAccel = Mathf.Clamp(forwardAccel, -runtimeMaxDecelMs2, runtimeMaxDecelMs2);
 
             Vector3 lateralVelocity = planarVelocity - _planarForward * currentForwardSpeed;
             Vector3 lateralAccel = Vector3.zero;
@@ -361,6 +404,131 @@ namespace FuzzyRobot
             {
                 headingVisual.rotation = Quaternion.LookRotation(_planarForward, Vector3.up);
             }
+        }
+        
+        private RuntimeConditions ReadRuntimeConditions(Vector3 position, float dt)
+        {
+            float batteryPercent = BatteryConst;
+            float surfaceValue = SurfaceConst;
+            float illuminationValue = IlluminationConst;
+
+            if (useRuntimeExtremeFactors)
+            {
+                if (batteryModel != null)
+                {
+                    batteryModel.Tick(dt, position, Mathf.Abs(_currentYawRateDeg));
+                    batteryPercent = batteryModel.ChargePercent;
+                }
+
+                if (surfaceProbe != null)
+                {
+                    surfaceProbe.TryReadSurface(position, out surfaceValue, out _);
+                }
+
+                if (illuminationProbe != null)
+                {
+                    illuminationValue = illuminationProbe.SampleIllumination(position);
+                }
+            }
+
+            float lowBattery01 = 1f - Mathf.Clamp01(batteryPercent / 100f);
+            float slippery01 = Mathf.Clamp01(surfaceValue / 2f);
+            float dark01 = 1f - Mathf.Clamp01(illuminationValue / 1000f);
+
+            float combinedRisk01 =
+                Mathf.Clamp01(
+                    0.35f * lowBattery01 +
+                    0.35f * slippery01 +
+                    0.30f * dark01 +
+                    0.25f * Mathf.Min(lowBattery01, slippery01) +
+                    0.20f * Mathf.Min(slippery01, dark01));
+
+            return new RuntimeConditions
+            {
+                BatteryPercent = batteryPercent,
+                SurfaceValue = surfaceValue,
+                Illumination = illuminationValue,
+                CombinedRisk01 = combinedRisk01
+            };
+        }
+        
+        private void ApplySafetyEnvelope(RuntimeConditions runtime, ref float desiredSpeedMs)
+        {
+            if (!useSafetyEnvelope)
+            {
+                return;
+            }
+
+            float speedMul = 1f;
+
+            if (runtime.BatteryPercent < 20f)
+            {
+                speedMul *= lowBatterySpeedMultiplier;
+            }
+
+            switch (runtime.SurfaceValue)
+            {
+                case >= 1f and < 2f:
+                    speedMul *= roughSpeedMultiplier;
+                    break;
+                case >= 2f:
+                    speedMul *= slipperySpeedMultiplier;
+                    break;
+            }
+
+            if (runtime.Illumination < 80f)
+            {
+                speedMul *= darkSpeedMultiplier;
+            }
+
+            if (runtime.CombinedRisk01 > 0.75f)
+            {
+                speedMul *= extremeComboSpeedMultiplier;
+            }
+
+            desiredSpeedMs *= speedMul;
+        }
+        
+        private float GetRuntimeYawRateLimit(RuntimeConditions runtime)
+        {
+            float limit = maxYawRateDeg;
+
+            if (runtime.SurfaceValue >= 2f)
+            {
+                limit *= 0.65f;
+            }
+            else if (runtime.SurfaceValue >= 1f)
+            {
+                limit *= 0.85f;
+            }
+
+            if (runtime.CombinedRisk01 > 0.75f)
+            {
+                limit *= 0.8f;
+            }
+
+            return limit;
+        }
+        
+        private float GetRuntimeMaxDecelMs2(RuntimeConditions runtime)
+        {
+            float limit = maxDecelMs2;
+
+            if (runtime.SurfaceValue >= 2f)
+            {
+                limit *= 0.65f;
+            }
+            else if (runtime.SurfaceValue >= 1f)
+            {
+                limit *= 0.85f;
+            }
+
+            if (runtime.CombinedRisk01 > 0.75f)
+            {
+                limit *= 0.8f;
+            }
+
+            return limit;
         }
 
         private static Vector3 Flatten(Vector3 v)

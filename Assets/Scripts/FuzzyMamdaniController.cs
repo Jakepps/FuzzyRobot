@@ -19,7 +19,7 @@ namespace FuzzyRobot
     /// Чистое доменное ядро нечеткого контроллера.
     /// Не зависит от Unity API, кроме Mathf/Debug-friendly типов float.
     /// </summary>
-    public sealed class FuzzyMamdaniController
+    public class FuzzyMamdaniController
     {
         private const float Eps = 1e-6f;
 

@@ -2,7 +2,7 @@
 
 namespace FuzzyRobot
 {
-    public sealed class RobotObstacleSensors : MonoBehaviour
+    public class RobotObstacleSensors : MonoBehaviour
     {
         [Header("Raycast")]
         [SerializeField] private float originHeight = 0.25f;
