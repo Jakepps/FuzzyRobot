@@ -17,7 +17,8 @@ namespace FuzzyRobot
 
         public float MaxDistance => maxDistance;
 
-        public void ReadDistances(Vector3 worldPosition, Vector3 forward, out float left, out float center, out float right)
+        public void ReadDistances(Vector3 worldPosition, Vector3 forward, Transform ignoredRoot, 
+            out float left, out float center, out float right)
         {
             Vector3 position = worldPosition + Vector3.up * originHeight;
 
@@ -28,20 +29,20 @@ namespace FuzzyRobot
             }
             forward.Normalize();
 
-            center = Cast(position, forward, Color.green);
+            center = Cast(position, forward, ignoredRoot, Color.green);
 
             Vector3 leftDir = Quaternion.AngleAxis(-sideAngleDeg, Vector3.up) * forward;
-            left = Cast(position, leftDir, Color.cyan);
+            left = Cast(position, leftDir, ignoredRoot, Color.cyan);
 
             Vector3 rightDir = Quaternion.AngleAxis(sideAngleDeg, Vector3.up) * forward;
-            right = Cast(position, rightDir, Color.magenta);
+            right = Cast(position, rightDir, ignoredRoot, Color.magenta);
 
             left = Mathf.Clamp(left, 0f, maxDistance);
             center = Mathf.Clamp(center, 0f, maxDistance);
             right = Mathf.Clamp(right, 0f, maxDistance);
         }
 
-        public bool HasLineOfSight(Vector3 worldPosition, Vector3 targetPosition)
+        public bool HasLineOfSight(Vector3 worldPosition, Vector3 targetPosition, Transform ignoredRoot)
         {
             Vector3 origin = worldPosition + Vector3.up * originHeight;
             Vector3 toTarget = targetPosition - origin;
@@ -55,7 +56,7 @@ namespace FuzzyRobot
 
             Vector3 dir = toTarget / distance;
 
-            if (TryGetClosestHit(origin, dir, distance, out RaycastHit hit))
+            if (TryGetClosestHit(origin, dir, distance, ignoredRoot, out RaycastHit hit))
             {
                 if (debugDraw)
                 {
@@ -73,11 +74,11 @@ namespace FuzzyRobot
             return true;
         }
 
-        private float Cast(Vector3 originPos, Vector3 dir, Color color)
+        private float Cast(Vector3 originPos, Vector3 dir, Transform ignoredRoot, Color color)
         {
             dir.Normalize();
 
-            if (TryGetClosestHit(originPos, dir, maxDistance, out RaycastHit hit))
+            if (TryGetClosestHit(originPos, dir, maxDistance, ignoredRoot, out RaycastHit hit))
             {
                 if (debugDraw)
                 {
@@ -95,7 +96,8 @@ namespace FuzzyRobot
             return maxDistance;
         }
 
-        private bool TryGetClosestHit(Vector3 originPos, Vector3 dir, float distance, out RaycastHit closestHit)
+        private bool TryGetClosestHit(Vector3 originPos, Vector3 dir, float distance, Transform ignoredRoot, 
+            out RaycastHit closestHit)
         {
             int hitCount = Physics.RaycastNonAlloc(
                 originPos,
@@ -120,7 +122,8 @@ namespace FuzzyRobot
                 Transform hitTransform = hit.collider.transform;
                 
                 if (hitTransform == transform || 
-                    hitTransform.IsChildOf(transform))
+                    hitTransform.IsChildOf(transform) ||
+                    IsSameRoot(hitTransform, ignoredRoot))
                 {
                     continue;
                 }
@@ -134,6 +137,12 @@ namespace FuzzyRobot
             }
 
             return found;
+        }
+
+        private static bool IsSameRoot(Transform hitTransform, Transform root)
+        {
+            return root != null &&
+                   (hitTransform == root || hitTransform.IsChildOf(root) || root.IsChildOf(hitTransform));
         }
     }
 }

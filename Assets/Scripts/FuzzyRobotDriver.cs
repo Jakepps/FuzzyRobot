@@ -85,6 +85,7 @@ namespace FuzzyRobot
 
         private float _currentYawRateDeg;
         private int _avoidTurnSign = 1; // +1 = вправо, -1 = влево
+        private bool _hasReachedTarget;
 
         private enum NavigationMode
         {
@@ -134,20 +135,15 @@ namespace FuzzyRobot
             Vector3 planarVelocity = Flatten(GetLinearVelocity(rigidbodyDriver));
             float planarSpeed = planarVelocity.magnitude;
 
-            // Если достигли цели — плавно тормозим и больше не рулём
-            if (target != null)
+            if (_hasReachedTarget)
             {
-                Vector3 toTarget = Flatten(target.position - position);
-                if (toTarget.sqrMagnitude <= stopDistance * stopDistance)
-                {
-                    BrakeToStop(planarVelocity);
-                    UpdateHeadingVisual();
-                    return;
-                }
+                StopImmediately();
+                UpdateHeadingVisual();
+                return;
             }
 
             // 1) Сенсоры
-            sensors.ReadDistances(position, _planarForward, out float dLeft, out float dCenter, out float dRight);
+            sensors.ReadDistances(position, _planarForward, target, out float dLeft, out float dCenter, out float dRight);
 
             // 2) Данные о цели
             bool hasTarget = target != null;
@@ -168,7 +164,7 @@ namespace FuzzyRobot
                     angleErrDeg = Mathf.Clamp(angleErrDeg, -90f, 90f);
 
                     targetVisible = !requireLineOfSightToTarget || 
-                                    sensors.HasLineOfSight(position, target.position);
+                                    sensors.HasLineOfSight(position, target.position, target);
                 }
             }
 
@@ -388,6 +384,50 @@ namespace FuzzyRobot
 
             rigidbodyDriver.AddForce(brakeAccel, ForceMode.Acceleration);
             _currentYawRateDeg = Mathf.MoveTowards(_currentYawRateDeg, 0f, maxYawAccelDeg * dt);
+        }
+
+        private void StopImmediately()
+        {
+            rigidbodyDriver.linearVelocity = Vector3.zero;
+            rigidbodyDriver.angularVelocity = Vector3.zero;
+            _currentYawRateDeg = 0f;
+        }
+
+        private void OnCollisionEnter(Collision collision)
+        {
+            TryMarkTargetReached(collision.collider);
+        }
+
+        private void OnCollisionStay(Collision collision)
+        {
+            TryMarkTargetReached(collision.collider);
+        }
+
+        private void OnTriggerEnter(Collider other)
+        {
+            TryMarkTargetReached(other);
+        }
+
+        private void OnTriggerStay(Collider other)
+        {
+            TryMarkTargetReached(other);
+        }
+
+        private void TryMarkTargetReached(Collider other)
+        {
+            if (_hasReachedTarget || 
+                target == null || other == null)
+            {
+                return;
+            }
+
+            Transform otherTransform = other.transform;
+            if (otherTransform == target || 
+                otherTransform.IsChildOf(target) || target.IsChildOf(otherTransform))
+            {
+                _hasReachedTarget = true;
+                StopImmediately();
+            }
         }
 
         private void UpdateHeadingVisual()
