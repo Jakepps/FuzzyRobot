@@ -2177,7 +2177,7 @@ GameObject:
   - component: {fileID: 799672896}
   - component: {fileID: 799672895}
   m_Layer: 8
-  m_Name: LipperyPlane
+  m_Name: SlipperyPlane
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -2253,7 +2253,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: c22777d6e868e4f2fb421913386b154e, type: 2}
+  - {fileID: 2100000, guid: 1349ad560179fb04db87dc18238670dd, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -3249,7 +3249,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: c22777d6e868e4f2fb421913386b154e, type: 2}
+  - {fileID: 2100000, guid: a1d9578822d3e0144a76ff53ddaccc67, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -4519,7 +4519,7 @@ Transform:
   m_GameObject: {fileID: 1862812415}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: -12.8135, y: -0.84, z: -4.25}
+  m_LocalPosition: {x: -12.8135, y: -0.88, z: -4.25}
   m_LocalScale: {x: 0.062979065, y: 1, z: 0.12828971}
   m_ConstrainProportionsScale: 0
   m_Children: []
