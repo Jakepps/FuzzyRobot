@@ -3645,7 +3645,6 @@ MonoBehaviour:
   headingVisual: {fileID: 0}
   speedAt100: 100
   maxSpeedMs: 6
-  maxAccelMs2: 8
   maxDecelMs2: 10
   lateralDampingAccelMs2: 12
   maxYawRateDeg: 180
@@ -5462,6 +5461,58 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 2081222052}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!1 &2143246220
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2143246222}
+  - component: {fileID: 2143246221}
+  m_Layer: 0
+  m_Name: HUD
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2143246221
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2143246220}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3f9e09f41c4147e58fdc47a0b6d0a0a3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::FuzzyRobot.RobotTelemetryHud
+  driver: {fileID: 1217014022}
+  robotRigidbody: {fileID: 1217014024}
+  battery: {fileID: 656820296}
+  surfaceProbe: {fileID: 1503059828}
+  illuminationProbe: {fileID: 666442033}
+  anchoredPosition: {x: 18, y: -18}
+  panelSize: {x: 350, y: 238}
+  updateInterval: 0.1
+--- !u!4 &2143246222
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2143246220}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 25.99407, y: -0.04114, z: 36.30614}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -5474,3 +5525,4 @@ SceneRoots:
   - {fileID: 708460800}
   - {fileID: 1217014028}
   - {fileID: 212458779}
+  - {fileID: 2143246222}

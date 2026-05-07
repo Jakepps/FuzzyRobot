@@ -26,7 +26,6 @@ namespace FuzzyRobot
 
         [Header("Motion limits")]
         [SerializeField] private float maxSpeedMs = 6f;
-        [SerializeField] private float maxAccelMs2 = 8f;
         [SerializeField] private float maxDecelMs2 = 10f;
         [SerializeField] private float lateralDampingAccelMs2 = 12f;
 
@@ -86,6 +85,10 @@ namespace FuzzyRobot
         private float _currentYawRateDeg;
         private int _avoidTurnSign = 1; // +1 = вправо, -1 = влево
         private bool _hasReachedTarget;
+
+        public bool HasReachedTarget => _hasReachedTarget;
+        public Transform Target => target;
+        public float MaxSpeedMs => maxSpeedMs;
 
         private enum NavigationMode
         {
