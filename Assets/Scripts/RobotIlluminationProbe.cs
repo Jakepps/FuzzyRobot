@@ -13,6 +13,8 @@ namespace FuzzyRobot
         
         [Header("Illumination sources")]
         [SerializeField] private RobotIlluminationSource[] sources;
+        [SerializeField] private bool autoFindSources = true;
+        [SerializeField] private float sourceRefreshInterval = 1f;
 
         [Header("Spot response")]
         [SerializeField] private bool useSpotConeCheck = true;
@@ -23,13 +25,39 @@ namespace FuzzyRobot
 
         public float CurrentIllumination { get; private set; }
 
+        private readonly RaycastHit[] _hitsBuffer = new RaycastHit[16];
+        private float _nextSourceRefreshTime;
+
+        private void Awake()
+        {
+            RefreshSourcesIfNeeded(true);
+        }
+
+        private void OnEnable()
+        {
+            RefreshSourcesIfNeeded(true);
+        }
+
         public float SampleIllumination(Vector3 worldPosition)
         {
+            RefreshSourcesIfNeeded(false);
+
             Vector3 samplePos = worldPosition + Vector3.up * sampleHeight;
             float total = 0f;
 
+            if (sources == null || sources.Length == 0)
+            {
+                CurrentIllumination = 0f;
+                return CurrentIllumination;
+            }
+
             foreach (var src in sources)
             {
+                if (src == null || !src.IsActive)
+                {
+                    continue;
+                }
+
                 Vector3 fromSourceToSample = samplePos - src.transform.position;
                 float dist = fromSourceToSample.magnitude;
 
@@ -42,11 +70,7 @@ namespace FuzzyRobot
 
                 if (requireLineOfSight)
                 {
-                    if (Physics.Linecast(
-                            samplePos,
-                            src.transform.position,
-                            occluderMask,
-                            QueryTriggerInteraction.Ignore))
+                    if (!HasLineOfSightToSource(samplePos, src, dist))
                     {
                         continue;
                     }
@@ -57,7 +81,11 @@ namespace FuzzyRobot
 
                 float coneFactor = 1f;
 
-                if (useSpotConeCheck && src.SourceType == LightType.Spot)
+                if (src.SourceType == LightType.Point)
+                {
+                    coneFactor = 1f;
+                }
+                else if (useSpotConeCheck && src.SourceType == LightType.Spot)
                 {
                     coneFactor = EvaluateSpotConeFactor(src, dirToSample);
 
@@ -72,7 +100,12 @@ namespace FuzzyRobot
 
                 if (debug)
                 {
-                    Color c = src.SourceType == LightType.Spot ? Color.Lerp(Color.red, Color.yellow, coneFactor) : Color.yellow;
+                    Color c = src.SourceType switch
+                    {
+                        LightType.Point => Color.cyan,
+                        LightType.Spot => Color.Lerp(Color.red, Color.yellow, coneFactor),
+                        _ => Color.yellow
+                    };
                     Debug.DrawLine(src.transform.position, samplePos, c);
                 }
             }
@@ -85,6 +118,63 @@ namespace FuzzyRobot
             }
             
             return CurrentIllumination;
+        }
+
+        private void RefreshSourcesIfNeeded(bool force)
+        {
+            if (!autoFindSources)
+            {
+                return;
+            }
+
+            if (!force && Time.time < _nextSourceRefreshTime && sources is { Length: > 0 })
+            {
+                return;
+            }
+
+            sources = FindObjectsByType<RobotIlluminationSource>(FindObjectsSortMode.None);
+            _nextSourceRefreshTime = Time.time + Mathf.Max(0.1f, sourceRefreshInterval);
+        }
+
+        private bool HasLineOfSightToSource(Vector3 samplePos, RobotIlluminationSource src, float distance)
+        {
+            Vector3 direction = src.transform.position - samplePos;
+            if (direction.sqrMagnitude < 1e-6f)
+            {
+                return true;
+            }
+
+            direction /= distance;
+
+            int hitCount = Physics.RaycastNonAlloc(
+                samplePos,
+                direction,
+                _hitsBuffer,
+                distance,
+                occluderMask,
+                QueryTriggerInteraction.Ignore);
+
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider hitCollider = _hitsBuffer[i].collider;
+                if (hitCollider == null)
+                {
+                    continue;
+                }
+
+                Transform hitTransform = hitCollider.transform;
+                if (hitTransform == transform ||
+                    hitTransform.IsChildOf(transform) ||
+                    hitTransform == src.transform ||
+                    hitTransform.IsChildOf(src.transform))
+                {
+                    continue;
+                }
+
+                return false;
+            }
+
+            return true;
         }
 
         private float EvaluateSpotConeFactor(RobotIlluminationSource src, Vector3 dirToSample)

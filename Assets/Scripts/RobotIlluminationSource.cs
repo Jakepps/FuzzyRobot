@@ -16,8 +16,9 @@ namespace FuzzyRobot
         [SerializeField] private Color gizmoFillColor = new Color(1f, 0.85f, 0.2f, 0.15f);
 
         public float Radius => radius;
-        public float Intensity => intensity;
+        public float Intensity => attachedLight != null ? attachedLight.intensity : intensity;
         public Vector3 Direction => transform.forward;
+        public bool IsActive => isActiveAndEnabled && (attachedLight == null || attachedLight.enabled);
 
         public LightType SourceType =>
             attachedLight != null ? attachedLight.type : LightType.Point;
@@ -27,7 +28,22 @@ namespace FuzzyRobot
                 ? attachedLight.spotAngle
                 : 360f;
 
+        private void Awake()
+        {
+            SyncAttachedLight();
+        }
+
+        private void OnEnable()
+        {
+            SyncAttachedLight();
+        }
+
         private void OnValidate()
+        {
+            SyncAttachedLight();
+        }
+
+        private void SyncAttachedLight()
         {
             if (attachedLight == null)
             {
