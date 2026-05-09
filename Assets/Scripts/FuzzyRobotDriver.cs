@@ -40,6 +40,8 @@ namespace FuzzyRobot
         [SerializeField] private float stopDistance = 0.5f;
         [SerializeField] private float stopBrakeAccelMs2 = 15f;
         [SerializeField] private float minGoalSpeedMs = 0.75f;
+        [SerializeField] private float finalApproachDistance = 2f;
+        [SerializeField] private float finalApproachSpeedMs = 1.25f;
         [SerializeField] private bool requireLineOfSightToTarget = true;
 
         [Header("Obstacle exploration")]
@@ -85,6 +87,8 @@ namespace FuzzyRobot
         private float _currentYawRateDeg;
         private int _avoidTurnSign = 1; // +1 = вправо, -1 = влево
         private bool _hasReachedTarget;
+        private Collider[] _robotColliders;
+        private Collider[] _targetColliders;
 
         public bool HasReachedTarget => _hasReachedTarget;
         public Transform Target => target;
@@ -103,7 +107,14 @@ namespace FuzzyRobot
                 rigidbodyDriver = GetComponent<Rigidbody>();
             }
 
+            CacheColliders();
             InitializeForward();
+        }
+
+        private void CacheColliders()
+        {
+            _robotColliders = GetComponentsInChildren<Collider>();
+            _targetColliders = target != null ? target.GetComponentsInChildren<Collider>() : null;
         }
 
         private void InitializeForward()
@@ -138,7 +149,8 @@ namespace FuzzyRobot
             Vector3 planarVelocity = Flatten(GetLinearVelocity(rigidbodyDriver));
             float planarSpeed = planarVelocity.magnitude;
 
-            if (_hasReachedTarget)
+            if (TryMarkTargetReachedByTouch() || 
+                _hasReachedTarget)
             {
                 StopImmediately();
                 UpdateHeadingVisual();
@@ -199,7 +211,31 @@ namespace FuzzyRobot
             Vector3 desiredForward;
             float desiredSpeedMs;
 
-            if (mode == NavigationMode.GoalSeek)
+            bool finalApproach =
+                mode == NavigationMode.GoalSeek &&
+                distanceToTarget <= Mathf.Max(finalApproachDistance, stopDistance * 3f) &&
+                toTargetDir.sqrMagnitude > Epsilon;
+
+            if (finalApproach)
+            {
+                desiredForward = toTargetDir;
+                desiredSpeedMs = Mathf.Min(finalApproachSpeedMs, maxSpeedMs);
+
+                if (distanceToTarget > stopDistance * 2f)
+                {
+                    desiredSpeedMs = Mathf.Max(desiredSpeedMs, minGoalSpeedMs);
+                }
+
+                ApplySafetyEnvelope(runtime, ref desiredSpeedMs);
+
+                if (debugLog)
+                {
+                    Debug.Log(
+                        $"[FuzzyRobot][FinalApproach] distance={distanceToTarget:F2} desiredSpeed={desiredSpeedMs:F2}"
+                    );
+                }
+            }
+            else if (mode == NavigationMode.GoalSeek)
             {
                 float speedFuzzy = Mathf.Clamp(planarSpeed / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
 
@@ -431,6 +467,76 @@ namespace FuzzyRobot
                 _hasReachedTarget = true;
                 StopImmediately();
             }
+        }
+
+        private bool TryMarkTargetReachedByTouch()
+        {
+            if (_hasReachedTarget)
+            {
+                return true;
+            }
+
+            if (target == null)
+            {
+                return false;
+            }
+
+            if (_robotColliders == null || _robotColliders.Length == 0 ||
+                _targetColliders == null || _targetColliders.Length == 0)
+            {
+                CacheColliders();
+            }
+
+            if (_robotColliders == null || _targetColliders == null)
+            {
+                return false;
+            }
+
+            foreach (var robotCollider in _robotColliders)
+            {
+                if (robotCollider == null || 
+                    !robotCollider.enabled)
+                {
+                    continue;
+                }
+
+                foreach (var targetCollider in _targetColliders)
+                {
+                    if (targetCollider == null || 
+                        !targetCollider.enabled)
+                    {
+                        continue;
+                    }
+
+                    if (AreCollidersTouching(robotCollider, targetCollider))
+                    {
+                        _hasReachedTarget = true;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool AreCollidersTouching(Collider a, Collider b)
+        {
+            if (Physics.ComputePenetration(
+                    a,
+                    a.transform.position,
+                    a.transform.rotation,
+                    b,
+                    b.transform.position,
+                    b.transform.rotation,
+                    out _,
+                    out _))
+            {
+                return true;
+            }
+
+            Vector3 closestToB = b.ClosestPoint(a.bounds.center);
+            Vector3 closestToA = a.ClosestPoint(closestToB);
+            return (closestToA - closestToB).sqrMagnitude <= 0.0004f;
         }
 
         private void UpdateHeadingVisual()

@@ -221,6 +221,8 @@ MonoBehaviour:
   stopDistance: 0.5
   stopBrakeAccelMs2: 15
   minGoalSpeedMs: 0.75
+  finalApproachDistance: 5
+  finalApproachSpeedMs: 2
   requireLineOfSightToTarget: 1
   frontBlockedDistance: 2
   sidePreferenceThreshold: 0.25
