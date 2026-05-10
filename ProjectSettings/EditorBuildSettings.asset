@@ -8,6 +8,21 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/MazeSampleScene.unity
     guid: 99c9720ab356a0642a771bea13969a05
+  - enabled: 1
+    path: Assets/Scenes/SmoothRoadScene.unity
+    guid: c38564c59118b544ea53e7dd22241d90
+  - enabled: 1
+    path: Assets/Scenes/BlockRoadScene.unity
+    guid: bdbfc931bbc87f743924012ee49f9af5
+  - enabled: 1
+    path: Assets/Scenes/LightScene.unity
+    guid: 956065cac65805c4c89d447c6de40aef
+  - enabled: 1
+    path: Assets/Scenes/RoughRoadScene.unity
+    guid: 7241a7480841df44d8c672aa7b5c85ef
+  - enabled: 1
+    path: Assets/Scenes/SlipperyRoadScene.unity
+    guid: c16317cfb201a6045be23dbeb4593a11
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
   m_UseUCBPForAssetBundles: 0
