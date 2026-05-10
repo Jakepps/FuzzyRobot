@@ -7,7 +7,6 @@ namespace FuzzyRobot
     {
         [Header("Refs")]
         [SerializeField] private Transform target;
-        [SerializeField] private bool autoFindRobot = true;
 
         [Header("Follow")]
         [SerializeField] private Vector3 offset = new(0f, 7f, -9f);

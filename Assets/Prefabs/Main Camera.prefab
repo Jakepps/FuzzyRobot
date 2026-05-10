@@ -184,7 +184,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::FuzzyRobot.RobotCameraFollow
   target: {fileID: 0}
-  autoFindRobot: 1
   offset: {x: 0, y: 7, z: -9}
   lookAtHeight: 1.65
   positionSmoothTime: 1.18
