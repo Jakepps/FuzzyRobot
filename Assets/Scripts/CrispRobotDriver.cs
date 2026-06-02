@@ -1,17 +1,27 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 namespace FuzzyRobot
 {
+    /// <summary>
+    /// Четкий (crisp) драйвер движения робота — прямой аналог <see cref="FuzzyRobotDriver"/>.
+    /// Физика, сенсоры, объезд препятствий, финальный подход и «защитная оболочка» скорости
+    /// полностью идентичны нечеткому драйверу. Отличается только ядро принятия решения
+    /// в режиме GoalSeek: вместо <see cref="FuzzyMamdaniController"/> используется
+    /// <see cref="CrispRuleController"/> с жёсткими правилами «если–то».
+    ///
+    /// Это позволяет честно сравнить два алгоритма: всё прочее одинаково,
+    /// меняется только способ вычисления φ (курс) и ΔV (скорость).
+    /// </summary>
     [RequireComponent(typeof(Rigidbody))]
-    public class FuzzyRobotDriver : MonoBehaviour, IRobotDriver
+    public class CrispRobotDriver : MonoBehaviour, IRobotDriver
     {
         private const float Epsilon = 1e-6f;
-        
-        //Fallback manual values
+
+        // Fallback manual values
         private const float BatteryConst = 50f;
         private const float SurfaceConst = 0;
         private const float IlluminationConst = 200f;
-        
+
         [Header("Refs")]
         [SerializeField] private RobotObstacleSensors sensors;
         [SerializeField] private Transform target;
@@ -20,9 +30,9 @@ namespace FuzzyRobot
         [Tooltip("Опционально: объект для визуализации логического направления (стрелка, маркер и т.п.).")]
         [SerializeField] private Transform headingVisual;
 
-        [Header("Speed scaling (Unity m/s <-> fuzzy 0..100)")]
-        [Tooltip("Какая Unity-скорость (м/с) соответствует 100 fuzzy units.")]
-        [SerializeField] private float speedAt100 = 10f;
+        [Header("Speed scaling (Unity m/s <-> crisp 0..100)")]
+        [Tooltip("Какая Unity-скорость (м/с) соответствует 100 crisp units.")]
+        [SerializeField] private float speedAt100 = 100f;
 
         [Header("Motion limits")]
         [SerializeField] private float maxSpeedMs = 6f;
@@ -40,8 +50,8 @@ namespace FuzzyRobot
         [SerializeField] private float stopDistance = 0.5f;
         [SerializeField] private float stopBrakeAccelMs2 = 15f;
         [SerializeField] private float minGoalSpeedMs = 0.75f;
-        [SerializeField] private float finalApproachDistance = 2f;
-        [SerializeField] private float finalApproachSpeedMs = 1.25f;
+        [SerializeField] private float finalApproachDistance = 5f;
+        [SerializeField] private float finalApproachSpeedMs = 2f;
         [SerializeField] private bool requireLineOfSightToTarget = true;
 
         [Header("Obstacle exploration")]
@@ -63,7 +73,17 @@ namespace FuzzyRobot
         [SerializeField] private float slipperySpeedMultiplier = 0.65f;
         [SerializeField] private float darkSpeedMultiplier = 0.75f;
         [SerializeField] private float extremeComboSpeedMultiplier = 0.55f;
-        
+
+        [Header("Crisp setup")]
+        [Tooltip("Если на объекте есть нечеткий драйвер, отключить его при старте, чтобы оба не конфликтовали.")]
+        [SerializeField] private bool disableFuzzyDriverOnAwake = true;
+
+        [Tooltip("Если ссылки не заданы вручную — найти их автоматически (Rigidbody/сенсоры/батарея/цель и т.д.).")]
+        [SerializeField] private bool autoResolveReferences = true;
+
+        [Tooltip("Имя объекта-цели для автоматического поиска, если поле Target пустое.")]
+        [SerializeField] private string targetObjectName = "Target";
+
         private struct RuntimeConditions
         {
             public float BatteryPercent;   // 0..100
@@ -75,7 +95,7 @@ namespace FuzzyRobot
         [Header("Debug")]
         [SerializeField] private bool debugLog;
 
-        private readonly FuzzyMamdaniController _controller = new();
+        private readonly CrispRuleController _controller = new();
 
         /// <summary>
         /// Логическое направление движения.
@@ -102,6 +122,20 @@ namespace FuzzyRobot
 
         private void Awake()
         {
+            if (disableFuzzyDriverOnAwake)
+            {
+                var fuzzy = GetComponent<FuzzyRobotDriver>();
+                if (fuzzy != null && fuzzy.enabled)
+                {
+                    fuzzy.enabled = false;
+                }
+            }
+
+            if (autoResolveReferences)
+            {
+                ResolveReferences();
+            }
+
             if (rigidbodyDriver == null)
             {
                 rigidbodyDriver = GetComponent<Rigidbody>();
@@ -109,6 +143,43 @@ namespace FuzzyRobot
 
             CacheColliders();
             InitializeForward();
+        }
+
+        private void ResolveReferences()
+        {
+            if (rigidbodyDriver == null)
+            {
+                rigidbodyDriver = GetComponent<Rigidbody>();
+            }
+
+            if (sensors == null)
+            {
+                sensors = GetComponentInChildren<RobotObstacleSensors>();
+            }
+
+            if (batteryModel == null)
+            {
+                batteryModel = GetComponentInChildren<RobotBattery>();
+            }
+
+            if (surfaceProbe == null)
+            {
+                surfaceProbe = GetComponentInChildren<RobotSurfaceProbe>();
+            }
+
+            if (illuminationProbe == null)
+            {
+                illuminationProbe = GetComponentInChildren<RobotIlluminationProbe>();
+            }
+
+            if (target == null && !string.IsNullOrEmpty(targetObjectName))
+            {
+                GameObject found = GameObject.Find(targetObjectName);
+                if (found != null)
+                {
+                    target = found.transform;
+                }
+            }
         }
 
         private void CacheColliders()
@@ -139,7 +210,7 @@ namespace FuzzyRobot
 
         private void FixedUpdate()
         {
-            if (sensors == null || 
+            if (sensors == null ||
                 rigidbodyDriver == null)
             {
                 return;
@@ -149,7 +220,7 @@ namespace FuzzyRobot
             Vector3 planarVelocity = Flatten(GetLinearVelocity(rigidbodyDriver));
             float planarSpeed = planarVelocity.magnitude;
 
-            if (TryMarkTargetReachedByTouch() || 
+            if (TryMarkTargetReachedByTouch() ||
                 _hasReachedTarget)
             {
                 StopImmediately();
@@ -178,7 +249,7 @@ namespace FuzzyRobot
                     angleErrDeg = Vector3.SignedAngle(_planarForward, toTargetDir, Vector3.up);
                     angleErrDeg = Mathf.Clamp(angleErrDeg, -90f, 90f);
 
-                    targetVisible = !requireLineOfSightToTarget || 
+                    targetVisible = !requireLineOfSightToTarget ||
                                     sensors.HasLineOfSight(position, target.position, target);
                 }
             }
@@ -192,17 +263,17 @@ namespace FuzzyRobot
 
             float dt = Time.fixedDeltaTime;
             float currentForwardSpeed = Vector3.Dot(planarVelocity, _planarForward);
-            
+
             RuntimeConditions runtime = ReadRuntimeConditions(position, dt);
-            
-            if (batteryModel.IsRecharging)
+
+            if (batteryModel != null && batteryModel.IsRecharging)
             {
                 BrakeToStop(planarVelocity);
                 UpdateHeadingVisual();
 
                 if (debugLog)
                 {
-                    Debug.Log("[FuzzyRobot] Battery depleted. Robot is stopped and recharging.");
+                    Debug.Log("[CrispRobot] Battery depleted. Robot is stopped and recharging.");
                 }
 
                 return;
@@ -231,13 +302,13 @@ namespace FuzzyRobot
                 if (debugLog)
                 {
                     Debug.Log(
-                        $"[FuzzyRobot][FinalApproach] distance={distanceToTarget:F2} desiredSpeed={desiredSpeedMs:F2}"
+                        $"[CrispRobot][FinalApproach] distance={distanceToTarget:F2} desiredSpeed={desiredSpeedMs:F2}"
                     );
                 }
             }
             else if (mode == NavigationMode.GoalSeek)
             {
-                float speedFuzzy = Mathf.Clamp(planarSpeed / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
+                float speedCrisp = Mathf.Clamp(planarSpeed / Mathf.Max(0.001f, speedAt100) * 100f, 0f, 100f);
 
                 float battInput = useRuntimeExtremeFactors ? runtime.BatteryPercent : 50f;
                 float surfInput = useRuntimeExtremeFactors ? runtime.SurfaceValue : 0f;
@@ -248,7 +319,7 @@ namespace FuzzyRobot
                     dCenter,
                     dRight,
                     angleErrDeg,
-                    speedFuzzy,
+                    speedCrisp,
                     battInput,
                     surfInput,
                     illumInput
@@ -279,8 +350,9 @@ namespace FuzzyRobot
                 if (debugLog)
                 {
                     Debug.Log(
-                        $"[FuzzyRobot][GoalSeek] dL={dLeft:F2} dC={dCenter:F2} dR={dRight:F2} " +
-                        $"visible={targetVisible} ang={angleErrDeg:F1} desiredSpeed={desiredSpeedMs:F2}"
+                        $"[CrispRobot][GoalSeek] dL={dLeft:F2} dC={dCenter:F2} dR={dRight:F2} " +
+                        $"visible={targetVisible} ang={angleErrDeg:F1} phi={outCmd.Phi:F1} dV={outCmd.DeltaV:F1} " +
+                        $"desiredSpeed={desiredSpeedMs:F2}"
                     );
                 }
             }
@@ -288,13 +360,13 @@ namespace FuzzyRobot
             {
                 desiredForward = ComputeAvoidanceForward(dLeft, dCenter, dRight);
                 desiredSpeedMs = ComputeAvoidanceSpeed(dCenter);
-                
+
                 ApplySafetyEnvelope(runtime, ref desiredSpeedMs);
 
                 if (debugLog)
                 {
                     Debug.Log(
-                        $"[FuzzyRobot][Avoid] dL={dLeft:F2} dC={dCenter:F2} dR={dRight:F2} " +
+                        $"[CrispRobot][Avoid] dL={dLeft:F2} dC={dCenter:F2} dR={dRight:F2} " +
                         $"turnSign={_avoidTurnSign} desiredSpeed={desiredSpeedMs:F2}"
                     );
                 }
@@ -370,7 +442,7 @@ namespace FuzzyRobot
             }
 
             float yawRateLimit = GetRuntimeYawRateLimit(runtime);
-            
+
             float headingErrorDeg = Vector3.SignedAngle(_planarForward, desiredForward, Vector3.up);
             float desiredYawRateDeg = Mathf.Clamp(headingErrorDeg * 4f, -yawRateLimit, yawRateLimit);
 
@@ -394,7 +466,7 @@ namespace FuzzyRobot
             float currentForwardSpeed = Vector3.Dot(planarVelocity, _planarForward);
 
             float runtimeMaxDecelMs2 = GetRuntimeMaxDecelMs2(runtime);
-            
+
             float forwardAccel = (desiredSpeedMs - currentForwardSpeed) / Mathf.Max(0.001f, dt);
             forwardAccel = Mathf.Clamp(forwardAccel, -runtimeMaxDecelMs2, runtimeMaxDecelMs2);
 
@@ -454,14 +526,14 @@ namespace FuzzyRobot
 
         private void TryMarkTargetReached(Collider other)
         {
-            if (_hasReachedTarget || 
+            if (_hasReachedTarget ||
                 target == null || other == null)
             {
                 return;
             }
 
             Transform otherTransform = other.transform;
-            if (otherTransform == target || 
+            if (otherTransform == target ||
                 otherTransform.IsChildOf(target) || target.IsChildOf(otherTransform))
             {
                 _hasReachedTarget = true;
@@ -494,7 +566,7 @@ namespace FuzzyRobot
 
             foreach (var robotCollider in _robotColliders)
             {
-                if (robotCollider == null || 
+                if (robotCollider == null ||
                     !robotCollider.enabled)
                 {
                     continue;
@@ -502,7 +574,7 @@ namespace FuzzyRobot
 
                 foreach (var targetCollider in _targetColliders)
                 {
-                    if (targetCollider == null || 
+                    if (targetCollider == null ||
                         !targetCollider.enabled)
                     {
                         continue;
@@ -554,7 +626,7 @@ namespace FuzzyRobot
                 headingVisual.rotation = Quaternion.LookRotation(_planarForward, Vector3.up);
             }
         }
-        
+
         private RuntimeConditions ReadRuntimeConditions(Vector3 position, float dt)
         {
             float batteryPercent = BatteryConst;
@@ -600,7 +672,7 @@ namespace FuzzyRobot
                 CombinedRisk01 = combinedRisk01
             };
         }
-        
+
         private void ApplySafetyEnvelope(RuntimeConditions runtime, ref float desiredSpeedMs)
         {
             if (!useSafetyEnvelope)
@@ -637,7 +709,7 @@ namespace FuzzyRobot
 
             desiredSpeedMs *= speedMul;
         }
-        
+
         private float GetRuntimeYawRateLimit(RuntimeConditions runtime)
         {
             float limit = maxYawRateDeg;
@@ -658,7 +730,7 @@ namespace FuzzyRobot
 
             return limit;
         }
-        
+
         private float GetRuntimeMaxDecelMs2(RuntimeConditions runtime)
         {
             float limit = maxDecelMs2;

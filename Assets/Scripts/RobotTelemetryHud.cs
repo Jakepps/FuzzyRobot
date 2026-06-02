@@ -31,6 +31,9 @@ namespace FuzzyRobot
         private Image _illuminationFill;
         private float _nextUpdateTime;
 
+        // Драйвер любого типа (нечеткий/четкий) через общий интерфейс.
+        private IRobotDriver _driver;
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void CreateDefaultHud()
         {
@@ -39,20 +42,87 @@ namespace FuzzyRobot
                 return;
             }
 
-            FuzzyRobotDriver sceneDriver = FindFirstObjectByType<FuzzyRobotDriver>();
-            if (sceneDriver == null)
+            if (FindActiveDriver() == null)
             {
                 return;
             }
 
             GameObject hudObject = new("Robot Telemetry HUD", typeof(RectTransform));
-            RobotTelemetryHud hud = hudObject.AddComponent<RobotTelemetryHud>();
-            hud.driver = sceneDriver;
+            hudObject.AddComponent<RobotTelemetryHud>();
+            // Привязка драйвера и источников телеметрии выполняется в Awake().
+        }
+
+        /// <summary>
+        /// Выбираем активный драйвер: сначала включённый четкий, затем включённый нечеткий,
+        /// иначе любой найденный. Так HUD показывает данные именно того алгоритма, что работает.
+        /// </summary>
+        private static IRobotDriver FindActiveDriver()
+        {
+            CrispRobotDriver crisp = FindFirstObjectByType<CrispRobotDriver>();
+            if (crisp != null && crisp.isActiveAndEnabled)
+            {
+                return crisp;
+            }
+
+            FuzzyRobotDriver fuzzy = FindFirstObjectByType<FuzzyRobotDriver>();
+            if (fuzzy != null && fuzzy.isActiveAndEnabled)
+            {
+                return fuzzy;
+            }
+
+            if (crisp != null)
+            {
+                return crisp;
+            }
+
+            return fuzzy;
         }
 
         private void Awake()
         {
+            // driver — сериализованная ссылка из инспектора (нечеткий драйвер, обратная совместимость).
+            // Если её нет или она «сломалась» (например, на четкой сцене драйвер заменён) — ищем активный.
+            if (_driver == null)
+            {
+                _driver = driver != null && driver.isActiveAndEnabled
+                    ? driver
+                    : FindActiveDriver();
+            }
+
+            ResolveTelemetrySourcesIfNeeded();
             BuildUi();
+        }
+
+        /// <summary>
+        /// Подтягиваем источники телеметрии (Rigidbody/батарея/поверхность/свет) с объекта робота,
+        /// если они не назначены вручную. Делает HUD самодостаточным на любой сцене.
+        /// </summary>
+        private void ResolveTelemetrySourcesIfNeeded()
+        {
+            if (_driver is not Component driverComponent)
+            {
+                return;
+            }
+
+            if (robotRigidbody == null)
+            {
+                robotRigidbody = driverComponent.GetComponent<Rigidbody>();
+            }
+
+            if (battery == null)
+            {
+                battery = driverComponent.GetComponentInChildren<RobotBattery>();
+            }
+
+            if (surfaceProbe == null)
+            {
+                surfaceProbe = driverComponent.GetComponentInChildren<RobotSurfaceProbe>();
+            }
+
+            if (illuminationProbe == null)
+            {
+                illuminationProbe = driverComponent.GetComponentInChildren<RobotIlluminationProbe>();
+            }
         }
 
         private void Update()
@@ -240,7 +310,7 @@ namespace FuzzyRobot
             _batteryValue.text = battery != null ? $"{batteryPercent:F0}%" : "--";
             _illuminationValue.text = illuminationProbe != null ? $"{illumination:F0} lx" : "--";
 
-            float maxSpeed = driver != null ? driver.MaxSpeedMs : 6f;
+            float maxSpeed = _driver != null ? _driver.MaxSpeedMs : 6f;
             SetFillAmount(_speedFill, speed / Mathf.Max(0.1f, maxSpeed));
             SetFillAmount(_batteryFill, batteryPercent / 100f);
             SetFillAmount(_illuminationFill, illumination / MaxIllumination);
@@ -252,7 +322,7 @@ namespace FuzzyRobot
                 _ => new Color(0.18f, 0.82f, 0.45f, 1f)
             };
 
-            bool reachedTarget = driver != null && driver.HasReachedTarget;
+            bool reachedTarget = _driver != null && _driver.HasReachedTarget;
             bool recharging = battery != null && battery.IsRecharging;
             _statusValue.text = reachedTarget ? "Цель достигнута" : recharging ? "Зарядка" : "Движение";
             _targetValue.text = FormatTargetDistance();
@@ -261,14 +331,14 @@ namespace FuzzyRobot
 
         private string FormatTargetDistance()
         {
-            if (driver == null || driver.Target == null || robotRigidbody == null)
+            if (_driver == null || _driver.Target == null || robotRigidbody == null)
             {
                 return "--";
             }
 
-            Vector3 delta = driver.Target.position - robotRigidbody.position;
+            Vector3 delta = _driver.Target.position - robotRigidbody.position;
             delta.y = 0f;
-            return driver.HasReachedTarget ? "контакт" : $"{delta.magnitude:F1} m";
+            return _driver.HasReachedTarget ? "контакт" : $"{delta.magnitude:F1} m";
         }
 
         private static string FormatSurface(float surface)
